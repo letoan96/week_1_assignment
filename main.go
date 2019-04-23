@@ -23,7 +23,6 @@ func main() {
 	run := flag.Bool("r", false, "Use to run server")
 	configure := flag.Bool("c", false, "Use to change config")
 	list := flag.Bool("l", false, "List redirections")
-	_, _, _, _, _ = *usageInfo, *addURL, *rmURL, *url, *port
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [<dir>]\nOptions are:\n", os.Args[0])
@@ -35,80 +34,81 @@ func main() {
 		flag.Usage()
 	}
 
-	f, err := os.OpenFile("config.txt", os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	f, err := os.OpenFile("config.yml", os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	handleErr(err)
 	b, err := ioutil.ReadAll(f)
 	handleErr(err)
 
 	content := string(b)
-	current_config := strings.Split(content, " ")
-	config_map := make(map[string]string)
 
 	if *configure == true {
 		if *addURL == "" && *url == "" {
 			flag.Usage()
 		}
 
-		if len(current_config) >= 1 {
-			for i, pair := range current_config {
-				a := strings.Split(pair, ":")
-				if *addURL == a[0] {
-					current_config[i] = *addURL + ":" + *url
-					output := strings.Join(current_config, " ")
-					err = ioutil.WriteFile("config.txt", []byte(output), 0644)
-					if err != nil {
-						log.Fatalln(err)
-					}
-					f.Close()
-					os.Exit(1)
-				}
-			}
+		if len(content) <= 0 {
 			data := *addURL + ":" + *url + " "
-			if _, err = f.WriteString(data); err != nil {
-				panic(err)
-			}
+			_, err = f.WriteString(data)
+			handleErr(err)
+			f.Close()
+			os.Exit(1)
+		}
 
-		} else {
-			data := *addURL + ":" + *url + " "
-			if _, err = f.WriteString(data); err != nil {
-				panic(err)
+		configLines := strings.Split(content, "\n")
+		for i, line := range configLines {
+			a := strings.Split(line, ":")
+			if *addURL == a[0] {
+				configLines[i] = *addURL + ":" + *url
+				output := strings.Join(configLines, "\n")
+				err = ioutil.WriteFile("config.yml", []byte(output), 0644)
+				handleErr(err)
+				f.Close()
+				os.Exit(1)
 			}
 		}
+		data := *addURL + ":" + *url
+		configLines = append(configLines, data)
+		output := strings.Join(configLines, "\n")
+		err = ioutil.WriteFile("config.yml", []byte(output), 0644)
+		handleErr(err)
+		f.Close()
+		os.Exit(1)
 	}
 
 	if *rmURL != "" {
-		if len(current_config) >= 1 {
-			for _, pair := range current_config {
-				a := strings.Split(pair, ":")
-				if *rmURL == a[0] {
-					current_config = remove(current_config, *rmURL)
+		if len(content) <= 0 {
+			fmt.Println("Config file is empty.")
+			f.Close()
+			os.Exit(1)
+		}
 
-					output := strings.Join(current_config, " ")
-					err = ioutil.WriteFile("config.txt", []byte(output), 0644)
-					if err != nil {
-						log.Fatalln(err)
-					}
-					f.Close()
-					os.Exit(1)
-				}
+		configLines := strings.Split(content, "\n")
+		for i, line := range configLines {
+			a := strings.Split(line, ":")
+			if *rmURL == a[0] {
+				configLines = append(configLines[:i], configLines[i+1:]...)
+				output := strings.Join(configLines, "\n")
+				err = ioutil.WriteFile("config.yml", []byte(output), 0644)
+				handleErr(err)
+				f.Close()
+				os.Exit(1)
 			}
 		}
-	}
 
-	if len(current_config) <= 1 {
-		fmt.Println("No config.")
+		fmt.Println("Can't not find .", *rmURL)
+		f.Close()
 		os.Exit(1)
-	}
-	for _, pair := range current_config {
-		a := strings.Split(pair, ":")
-		config_map[a[0]] = a[1]
+
 	}
 
 	if *list == true {
-		for _, pair := range current_config {
-			fmt.Println(pair)
+		configLines := strings.Split(content, "\n")
+		fmt.Println("List redirections:")
+		for _, line := range configLines {
+			a := strings.Split(line, ":")
+			fmt.Println("/", a[0], "-->", a[1])
 		}
-
+		os.Exit(1)
 	}
 
 	if *run == true {
@@ -116,21 +116,27 @@ func main() {
 			fmt.Println("Use command: \n ./rails run -p [port_number] \nto start server.")
 			os.Exit(1)
 		}
-		flag.Parse()
-		fmt.Println(*port)
-		myConfig := &Tconfig{Config: config_map}
+		configLines := strings.Split(content, "\n")
+		configMap := make(map[string]string)
+		for _, line := range configLines {
+			a := strings.Split(line, ":")
+			configMap[a[0]] = a[1]
+		}
+		myConfig := &Tconfig{Config: configMap}
 		fmt.Fprintf(os.Stdout, "Server is listening on http://localhost:%s \n", *port)
 		http.HandleFunc("/", myConfig.handler)
-		http_port := ":" + *port
-		log.Fatal(http.ListenAndServe(http_port, nil))
+		httpPort := ":" + *port
+		log.Fatal(http.ListenAndServe(httpPort, nil))
 
 	}
 
 }
 
 func (cf *Tconfig) handler(w http.ResponseWriter, r *http.Request) {
-
-	fmt.Fprintf(w, "This is the %s page!", cf.Config[r.URL.Path[1:]])
+	redirectUrl := cf.Config[r.URL.Path[1:]]
+	fmt.Println(redirectUrl)
+	http.Redirect(w, r, "http://"+redirectUrl, http.StatusMovedPermanently)
+	return
 }
 
 // func handleConfig() bool {
@@ -142,14 +148,4 @@ func handleErr(err error) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-func remove(s []string, r string) []string {
-	for i, v := range s {
-		if v == r {
-			return append(s[:i], s[i+1:]...)
-		}
-	}
-	fmt.Println()
-	return s
 }
